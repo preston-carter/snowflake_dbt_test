@@ -10,4 +10,4 @@ select
     last_name as surname,
     first_name as givenname,
     first_name || ' ' || last_name as full_name
-from customers
+from source

@@ -37,7 +37,7 @@ with customers as
         sum
             (
                 case
-                    when a.status not in ('returned','return_pending')
+                    when a.order_status not in ('returned','return_pending')
                     then c.payment_amount else 0
                 end
             ) as total_lifetime_value,
@@ -59,10 +59,10 @@ with customers as
         array_agg(distinct a.order_id) as order_ids
     from orders as a
     join customers as b
-        on a.customer_id = b.id
+        on a.customer_id = b.customer_id
     left join payments c
         on a.order_id = c.order_id
-    where a.status not in ('pending')
+    where a.order_status not in ('pending')
         and c.payment_status != 'fail'
     group by b.customer_id, b.full_name, b.surname, b.givenname
 )
@@ -72,8 +72,8 @@ with customers as
 select 
     orders.order_id,
     orders.customer_id,
-    surname,
-    givenname,
+    customers.surname,
+    customers.givenname,
     first_order_date,
     order_count,
     total_lifetime_value,
@@ -82,9 +82,9 @@ select
     payments.payment_status
 from orders as orders
 join customers
-    on orders.user_id = customers.id
+    on orders.customer_id = customers.customer_id
 join customer_order_history
-    on orders.user_id = customer_order_history.customer_id
+    on orders.customer_id = customer_order_history.customer_id
 left join  payments
-    on orders.id = payments.orderid
-where payments.status != 'fail'
+    on orders.order_id = payments.order_id
+where payments.payment_status != 'fail'
