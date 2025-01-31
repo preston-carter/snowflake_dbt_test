@@ -3,112 +3,88 @@ with customers as
 (
     select
         *
-    from {{ source('jaffle_shop', 'customers') }}
+    from {{ ref('stg_jaffle_shop__customers') }}
 )
 
 , orders as 
 (
     select
         *
-    from orders
+    from {{ ref('stg_jaffle_shop__orders') }}
 )
 
 , payments as 
 (
     select
         *
-    from {{ source('stripe', 'payment') }}
+    from {{ ref('stg_stripe__payments') }}
 )
 
 
--- Logical CTEs
-, customers_transformed as 
-(
-    select 
-        first_name || ' ' || last_name as name, 
-        * 
-    from customers
-)
-
-, orders_a as 
-(
-    select 
-        row_number() over (partition by user_id order by order_date, id) as user_order_seq,
-        *
-    from orders
-)
-
-, customers_b as 
-(
-    select 
-        first_name || ' ' || last_name as name, 
-        * 
-    from customers
-)
-
+-- Logic
 , customer_order_history as 
 (
     select 
-        b.id as customer_id,
-        b.name as full_name,
-        b.last_name as surname,
-        b.first_name as givenname,
+        b.customer_id,
+        b.full_name,
+        b.surname,
+        b.givenname,
         min(order_date) as first_order_date,
-        min(case when a.status not in ('returned','return_pending') then order_date end) as first_non_returned_order_date,
-        max(case when a.status not in ('returned','return_pending') then order_date end) as most_recent_non_returned_order_date,
+        min(case when a.order_status not in ('returned','return_pending') then order_date end) as first_non_returned_order_date,
+        max(case when a.order_status not in ('returned','return_pending') then order_date end) as most_recent_non_returned_order_date,
         coalesce(max(user_order_seq),0) as order_count,
-        coalesce(count(case when a.status != 'returned' then 1 end),0) as non_returned_order_count,
+        coalesce(count(case when a.order_status != 'returned' then 1 end),0) as non_returned_order_count,
         sum
             (
                 case
-                    when a.status not in ('returned','return_pending')
-                    then round(c.amount/100.0,2) else 0
+                    when a.order_status not in ('returned','return_pending')
+                    then c.payment_amount else 0
                 end
             ) as total_lifetime_value,
         sum
             (
                 case
-                    when a.status not in ('returned','return_pending')
-                    then round(c.amount/100.0,2) else 0
+                    when a.order_status not in ('returned','return_pending')
+                    then c.payment_amount else 0
                 end
             )
             /
             nullif(count
             (
                 case
-                    when a.status not in ('returned','return_pending')
+                    when a.order_status not in ('returned','return_pending')
                     then 1
                 end
             ),0) as avg_non_returned_order_value,
-        array_agg(distinct a.id) as order_ids
-    from orders_a as a
-    join customers_b as b
-        on a.user_id = b.id
+        array_agg(distinct a.order_id) as order_ids
+    from orders as a
+    join customers as b
+        on a.customer_id = b.customer_id
     left join payments c
-        on a.id = c.orderid
-    where a.status not in ('pending')
-        and c.status != 'fail'
-    group by b.id, b.name, b.last_name, b.first_name
+        on a.order_id = c.order_id
+    where a.order_status not in ('pending')
+        and c.payment_status != 'fail'
+    group by b.customer_id, b.full_name, b.surname, b.givenname
 )
 
 
 -- Final select
 select 
-    orders.id as order_id,
-    orders.user_id as customer_id,
-    last_name as surname,
-    first_name as givenname,
+    orders.order_id,
+    orders.customer_id,
+    customers.surname,
+    customers.givenname,
     first_order_date,
     order_count,
     total_lifetime_value,
-    round(amount/100.0,2) as order_value_dollars,
-    orders.status as order_status,
-    payments.status as payment_status
+    payment_amount as order_value_dollars,
+    orders.order_status,
+    payments.payment_status
 from orders as orders
-join customers_transformed
-    on orders.user_id = customers.id
+join customers
+    on orders.customer_id = customers.customer_id
 join customer_order_history
-    on orders.user_id = customer_order_history.customer_id
+    on orders.customer_id = customer_order_history.customer_id
 left join  payments
-    on orders.id = payments.orderid
-where payments.status != 'fail'
+    on orders.order_id = payments.order_id
+where payments.payment_status != 'fail'
